@@ -2,7 +2,21 @@
 title: "Mobilitetstrender under corona-tiden"
 author: "Trafik och samhälle, Region Uppsala"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
-output: html_notebook
+output: 
+  html_notebook:
+    theme: readable
+    toc: yes
+    number_sections: true
+    toc_float: true
+    code_folding: hide
+    df_print: paged
+  html_document:
+    theme: readable
+    toc: yes
+    number_sections: true
+    toc_float: true
+    code_folding: hide
+    df_print: paged
 ---
 
 ```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
@@ -107,7 +121,7 @@ rvu = rvu %>%
   left_join(., pers, by = "respondentid") %>%
   filter(ar == "2020")
 
-marknadsandel = rvu %>% 
+rvu %>% 
   filter(fardmedel.kat != "Annat") %>% 
   group_by(ar.manad, fardmedel.kat) %>% 
   tally() %>% 
@@ -122,9 +136,9 @@ marknadsandel = rvu %>%
 
 
 
-## Förändring i resande och färdmedelval
+# Förändring i resande och färdmedelval
 
-### Resandeutveckling med bil i Uppsala län & Stockholms län
+## Resandeutveckling med bil i Uppsala län & Stockholms län
 
 Data visar en relativ volym av vägbeskrivningsförfrågningar som Apple tog emot.  
 
@@ -191,7 +205,7 @@ ggplot(subset(apple3, region %in% urval),
 
 
 
-### Resandeutveckling med olika färdmedel i Stockholms stad  
+## Resandeutveckling med olika färdmedel i Stockholms stad  
 
 Som baslinje (100) används data från 13 januari 2020.
 
@@ -250,15 +264,22 @@ ggplot(subset(apple3, region %in% urval),
 ```
 
 
+Kollektivtrafikbarometerdata bekräftar negativ trenden i kollektivtrafikanvändning. Datamängden per månad är inte tillräckligt stort för att bryta ner på kommunnivå.
 
-
-```{r}
-ggplot(marknadsandel, 
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+rvu %>% 
+  filter(fardmedel.kat != "Annat") %>% 
+  group_by(ar.manad, fardmedel.kat) %>% 
+  tally() %>% 
+  ungroup() %>% 
+  group_by(ar.manad) %>% 
+  mutate(andel = n /sum(n)) %>%
+  ggplot(., 
        aes(x=ar.manad, y=andel * 100, group = fardmedel.kat, color = fardmedel.kat)) +
-  labs(title = "Medelvärde per vecka",
-       y = "Marknadsandel per måndad (Kollbar)",
+  labs(title = "Marknadsandel per måndad (Kollbar)",
+       y = "Marknadsandel (%)",
        x = "",
-#       subtitle = "(Uppsala län & Stockholms län)",
+       subtitle = "(Uppsala län)",
        caption = "Datakälla: Kollektivtrafikbarometer") +
   geom_line() +
   # geom_hline(yintercept=100, linetype="dashed", 
@@ -271,8 +292,7 @@ ggplot(marknadsandel,
 
 
 
-
-## Förändring i resande med olika syfte  
+# Förändring i resande med olika syfte  
 
 Data visar hur besök och vistelselängd på olika platser ändras jämfört med en baslinje. Platstyper som visas är:  
 
@@ -339,6 +359,8 @@ ggplot(subset(google3, sub_region_1 == "Uppsala County" & typ == "transit_statio
 
 
 &nbsp;
+
+# Datakällor
 
 **Om Apple data**  
 
