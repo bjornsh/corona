@@ -1,0 +1,377 @@
+---
+title: "Mobilitetstrender under corona-tiden"
+author: "Trafik och samhälle, Region Uppsala"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_notebook
+---
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+suppressMessages(library(tidyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(ggplot2))
+#suppressMessages(library(gridExtra))
+suppressMessages(library(scales))
+
+knitr::opts_chunk$set(message = FALSE)
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+rm(list = ls())
+invisible(gc())
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+# apple data
+date = substr(Sys.time(), 1, 10)
+date = as.Date(date, "%Y-%m-%d")
+date = date - 2 # data är 2 dagar gammal
+
+apple<-read.csv(paste0("https://covid19-static.cdn-apple.com/covid19-mobility-data/2008HotfixDev42/v3/en-us/applemobilitytrends-", date, ".csv"))
+
+write.csv2(apple, paste0("01_input_data/", "apple", date, ".csv"))
+
+apple = apple %>% 
+  dplyr::select(-geo_type, -alternative_name, -sub.region, -country) %>%
+  filter(grepl("Uppsala", region) | grepl("Stockholm", region)) 
+
+apple1 = apple %>%
+  gather(date,value,X2020.01.13:colnames(apple)[ncol(apple)]) %>%
+  mutate(date = substr(date, 2, 11),
+         date = gsub('[.]', '/', date),
+         date = as.Date(date, "%Y/%m/%d"),
+         vecka = strftime(date, format = "%V"),
+         weekday = weekdays(date, abbr = TRUE),
+         dagtyp = ifelse(weekday == "lör" | weekday == "sön", "helg", "vardag"),
+         grouping = paste(region, transportation_type, sep = "_"),
+         transportation_type = gsub('driving', 'bil', transportation_type),
+         transportation_type = gsub('transit', 'kollektivtrafik', transportation_type),
+         transportation_type = gsub('walking', 'gång', transportation_type))
+
+
+# aggregera per vecka
+apple2 = apple1 %>% 
+  group_by(region, grouping, transportation_type, vecka) %>%
+  summarise(median = median(value),
+            medel = mean(value))
+
+# aggregera per dagtyp och vecka
+apple3 = apple1 %>% 
+  group_by(region, transportation_type, vecka, dagtyp) %>%
+  summarise(median = median(value),
+            medel = mean(value))
+
+```
+
+
+```{r google, echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+# google data
+google<-read.csv("https://www.gstatic.com/covid19/mobility/Global_Mobility_Report.csv?cachebust=2dcf78defb92930a")
+write.csv2(google, paste0("01_input_data/", "google", substr(Sys.time(), 1, 10), ".csv"))
+
+colnames(google) = c("country_region_code", "country_region", "sub_region_1", "sub_region_2", "date", "retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential") 
+
+google1 = google %>% 
+  gather(typ,value,retail_and_recreation:residential) %>%
+  filter(grepl("Uppsala", sub_region_1) | grepl("Stockholm", sub_region_1)) %>%
+  mutate(date = gsub('[-]', '/', date),
+         date = as.Date(date, "%Y/%m/%d"),
+         vecka = strftime(date, format = "%V"),
+         weekday = weekdays(date, abbr = TRUE),
+         dagtyp = ifelse(weekday == "lör" | weekday == "sön", "helg", "vardag"))
+
+# aggregera per vecka
+google2 = google1 %>% 
+  group_by(sub_region_1, typ, vecka) %>%
+  summarise(median = median(value),
+            medel = mean(value))
+
+
+# aggregera per dagtyp och vecka
+google3 = google1 %>% 
+  group_by(sub_region_1, typ, vecka, dagtyp) %>%
+  summarise(median = median(value),
+            medel = mean(value))
+
+```
+
+
+
+```{r kollbar, echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+# Kollbar data
+rvu = read.csv2("Z:/a_data/kollbar/data_ul/rvu_utan_na_rader_och_samma_start_stop.csv")
+pers = read.csv2("Z:/a_data/kollbar/data_ul/persondata.csv")
+
+rvu = rvu %>%
+  left_join(., pers, by = "respondentid") %>%
+  filter(ar == "2020")
+
+marknadsandel = rvu %>% 
+  filter(fardmedel.kat != "Annat") %>% 
+  group_by(ar.manad, fardmedel.kat) %>% 
+  tally() %>% 
+  ungroup() %>% 
+  group_by(ar.manad) %>% 
+  mutate(andel = n /sum(n)) 
+
+```
+
+
+
+
+
+
+## Förändring i resande och färdmedelval
+
+### Resandeutveckling med bil i Uppsala län & Stockholms län
+
+Data visar en relativ volym av vägbeskrivningsförfrågningar som Apple tog emot.  
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+urval = c("Uppsala County", "Stockholm County")
+
+ggplot(subset(apple1, region %in% urval), 
+       aes(x=date, y=value, group = region, color = region)) +
+  labs(title = "Data per dag",
+#       subtitle = "(Uppsala län & Stockholms län)",
+       caption = "Datakälla: Apple") +
+  geom_line() +
+  geom_hline(yintercept=100, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank(),
+        legend.position="bottom") +
+  scale_x_date(date_breaks = '1 week') +
+  theme(axis.text.x = element_text(angle = 90),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+
+```
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+urval = c("Uppsala County", "Stockholm County")
+
+ggplot(subset(apple2, region %in% urval), 
+       aes(x=vecka, y=medel, group = region, color = region)) +
+  labs(title = "Medelvärde per vecka",
+#       subtitle = "(Uppsala län & Stockholms län)",
+       caption = "Datakälla: Apple") +
+  geom_line() +
+  geom_hline(yintercept=100, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank(),
+        legend.position="bottom")
+
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+urval = c("Uppsala County", "Stockholm County")
+
+ggplot(subset(apple3, region %in% urval), 
+       aes(x=vecka, y=medel, group = interaction(region, dagtyp) , color = region, shape = dagtyp)) +
+  labs(title = "Medelvärde per vecka för vardagar och helg",
+#       subtitle = "(Uppsala län & Stockholms län)",
+       caption = "Datakälla: Apple") +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_hline(yintercept=100, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank(),
+        legend.position="bottom")
+
+```
+
+
+
+### Resandeutveckling med olika färdmedel i Stockholms stad  
+
+Som baslinje (100) används data från 13 januari 2020.
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+urval = c("Stockholm")
+
+ggplot(subset(apple1, region %in% urval), 
+       aes(x=date, y=value, group = transportation_type, color = transportation_type)) +
+  labs(title = "Resandeutveckling per färdmedel",
+       subtitle = "(Stockholms stad, data för Uppsala finns inte)",
+       caption = "Datakälla: Apple") +
+  geom_line() +
+  geom_hline(yintercept=100, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank()) +
+  scale_x_date(date_breaks = '1 week') +
+  theme(axis.text.x = element_text(angle = 90),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+urval = c("Stockholm")
+
+ggplot(subset(apple2, region %in% urval), 
+       aes(x=vecka, y=medel, group = transportation_type, color = transportation_type)) +
+  labs(title = "Medelvärde per vecka",
+       subtitle = "(Stockholms stad, data för Uppsala finns inte)",
+       caption = "Datakälla: Apple") +
+  geom_line() +
+  geom_hline(yintercept=100, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank())
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+# Färmedel per dagtyp och vecka
+urval = c("Stockholm")
+
+ggplot(subset(apple3, region %in% urval), 
+       aes(x=vecka, y=medel, group = interaction(dagtyp, transportation_type), color = transportation_type, shape = dagtyp)) +
+  labs(title = "Medelvärde per vecka för vardagar och helg",
+       subtitle = "(Stockholms stad, data för Uppsala finns inte)",
+       caption = "Datakälla: Apple") +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_hline(yintercept=100, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank())
+```
+
+
+
+
+```{r}
+ggplot(marknadsandel, 
+       aes(x=ar.manad, y=andel * 100, group = fardmedel.kat, color = fardmedel.kat)) +
+  labs(title = "Medelvärde per vecka",
+       y = "Marknadsandel per måndad (Kollbar)",
+       x = "",
+#       subtitle = "(Uppsala län & Stockholms län)",
+       caption = "Datakälla: Kollektivtrafikbarometer") +
+  geom_line() +
+  # geom_hline(yintercept=100, linetype="dashed", 
+  #               color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank(),
+        legend.position="bottom")
+```
+
+
+
+
+
+## Förändring i resande med olika syfte  
+
+Data visar hur besök och vistelselängd på olika platser ändras jämfört med en baslinje. Platstyper som visas är:  
+
+* **Livsmedelsbutiker och apotek:** Trender i rörelsemönster för platser som mataffärer, grossistbutiker, matmarknader, delikatessbutiker och apotek.  
+* **Parker:** Trender i rörelsemönster för platser som stadsparker, nationalparker, allmänna stränder, marinor, hundrastgårdar, torg och besöksträdgårdar.  
+* **Stationer i kollektivtrafiken:** Trender i rörelsemönster på kollektivtrafikstationer som tunnelbane-, buss- och tågstationer.
+* **Shopping och nöje:** Trender i rörelsemönster för platser som restauranger, kaféer, shoppingcenter, nöjesparker, museer, bibliotek och biografer.
+* **Bostäder:** Trender i rörelsemönster gällande bostäder.
+* **Arbetsplatser:** Trender i rörelsemönster gällande arbetsplatser  
+
+Baslinjen är medianvärdet för veckodagen under en femveckorsperiod mellan den 3 januari och 6 februari 2020.  
+
+&nbsp;
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+ggplot(subset(google1, sub_region_1 == "Uppsala County"), 
+       aes(x=date, y=value, group = typ, color = typ)) +
+   labs(title = "Uppsala län",
+       caption = "Datakälla: Google") +
+  geom_line() +
+  geom_hline(yintercept=0, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank()) +
+  scale_x_date(date_breaks = '1 week') +
+  theme(axis.text.x = element_text(angle = 90),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+```
+
+&nbsp;
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+ggplot(subset(google2, sub_region_1 == "Uppsala County"), 
+       aes(x=vecka, y=medel, group = typ, color = typ)) +
+   labs(title = "Uppsala län",
+       caption = "Datakälla: Google",
+       y = "Medel per vecka") +
+  geom_line() +
+  geom_hline(yintercept=0, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank())
+```
+
+&nbsp;
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+ggplot(subset(google3, sub_region_1 == "Uppsala County" & typ == "transit_stations"), 
+       aes(x=vecka, y=medel, group = dagtyp, color = dagtyp)) +
+   labs(title = "Rörelsemönster på kollektivtrafikstationer i Uppsala län",
+       caption = "Datakälla: Google",
+       y = "Medel per vecka") +
+  geom_line() +
+  geom_hline(yintercept=0, linetype="dashed", 
+                color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank())
+```
+
+
+
+
+
+
+&nbsp;
+
+**Om Apple data**  
+
+Datakälla: https://www.apple.com/covid19/mobility  
+
+CSV-filen och tabellerna på den här webbplatsen visar en relativ volym av vägbeskrivningsförfrågningar per land/region eller ort jämfört med en baslinje från den 13 januari 2020.  
+
+Vi definierar en dag som midnatt till midnatt (PST). Orter representerar användning i storstadsområden och är varaktigt definierade under den här perioden. I många länder/regioner och orter har den relativa volymen ökat sedan den 13 januari, vilket är konsekvent med normal, årstidsbaserad användning av Apple Maps. Det är viktigt att normalisera dags- eller veckoeffekter när du använder dessa data.  
+
+Data som skickas från användares enheter till Kartor-tjänsten associeras med slumpmässiga, roterande identifierare så att Apple inte kan skapa en profil över dina rörelser och sökningar. Apple Maps har ingen demografisk information om våra användare, så vi kan inte göra några uttalanden om hur vår användning representerar den allmänna befolkningen.  
+
+&nbsp;
+
+**Om Google data**  
+Datakälla: https://www.google.com/covid19/mobility  
+
+Platskategorier  
+
+* Livsmedelsbutiker och apotek: Trender i rörelsemönster för platser som mataffärer, grossistbutiker, matmarknader, delikatessbutiker och apotek.  
+* Parker: Trender i rörelsemönster för platser som stadsparker, nationalparker, allmänna stränder, marinor, hundrastgårdar, torg och besöksträdgårdar.  
+* Stationer i kollektivtrafiken: Trender i rörelsemönster på kollektivtrafikstationer som tunnelbane-, buss- och tågstationer.
+* Shopping och nöje: Trender i rörelsemönster för platser som restauranger, kaféer, shoppingcenter, nöjesparker, museer, bibliotek och biografer.
+* Bostäder: Trender i rörelsemönster gällande bostäder.
+* Arbetsplatser: Trender i rörelsemönster gällande arbetsplatser
+
+Dessa dataset visar hur besök och vistelselängd på olika platser ändras jämfört med en baslinje. Vi beräknar dessa förändringar med samma typ av sammanställda och anonymiserade data som används för att visa populära tider för platser i Google Maps.  
+
+Förändringarna per dag jämförs med ett baslinjevärde för den aktuella veckodagen: Baslinjen är medianvärdet för veckodagen under en femveckorsperiod mellan den 3 januari och 6 februari 2020. Dataseten visar trender för flera månader, och den senaste datan är cirka 2–3 dagar gammal. Det är den tid som krävs för att skapa dataseten.  
+
+Vilken data som inkluderas i beräkningarna beror på användarnas inställningar och anslutning och huruvida den uppfyller vår sekretessgräns. Om sekretessgränsen inte uppfylls (när en plats inte har tillräckligt många besökare för att garantera anonymitet) visar vi ingen förändring för den dagen. Resultatet kan bli att du ser tomma fält för vissa platser och date.  
+
+Vi inkluderar kategorier som är användbara vid social distansering samt tillgång till nödvändiga tjänster.  
+
+Vi beräknar dessa underlag utifrån data från användare som har aktiverat platshistorik för sina Google-konton. Denna data representerar därför endast en del av våra användare. Som är fallet med stickprov kan detta vara representativt för en bredare allmänhet men behöver inte vara det.
+
+
