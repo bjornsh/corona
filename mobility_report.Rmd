@@ -19,30 +19,33 @@ output:
     df_print: paged
 ---
 
-```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE,  message=FALSE, include=FALSE}
 suppressMessages(library(tidyr))
 suppressMessages(library(dplyr))
+suppressMessages(library(readxl))
 suppressMessages(library(ggplot2))
 #suppressMessages(library(gridExtra))
 suppressMessages(library(scales))
 
 knitr::opts_chunk$set(message = FALSE)
+options(scipen=10000)
 ```
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 rm(list = ls())
 invisible(gc())
 ```
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 # apple data
 date = substr(Sys.time(), 1, 10)
 date = as.Date(date, "%Y-%m-%d")
 date = date - 2 # data är 2 dagar gammal
 
-apple<-read.csv(paste0("https://covid19-static.cdn-apple.com/covid19-mobility-data/2008HotfixDev42/v3/en-us/applemobilitytrends-", date, ".csv"))
+# det kan vara att apple också byter siffran i "Dev43" varje dag
+apple<-read.csv(paste0("https://covid19-static.cdn-apple.com/covid19-mobility-data/2008HotfixDev43/v3/en-us/applemobilitytrends-", date, ".csv"))
 
 write.csv2(apple, paste0("01_input_data/", "apple", date, ".csv"))
 
@@ -79,7 +82,7 @@ apple3 = apple1 %>%
 ```
 
 
-```{r google, echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+```{r google, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 # google data
 google<-read.csv("https://www.gstatic.com/covid19/mobility/Global_Mobility_Report.csv?cachebust=2dcf78defb92930a")
 write.csv2(google, paste0("01_input_data/", "google", substr(Sys.time(), 1, 10), ".csv"))
@@ -101,7 +104,6 @@ google2 = google1 %>%
   summarise(median = median(value),
             medel = mean(value))
 
-
 # aggregera per dagtyp och vecka
 google3 = google1 %>% 
   group_by(sub_region_1, typ, vecka, dagtyp) %>%
@@ -112,38 +114,124 @@ google3 = google1 %>%
 
 
 
-```{r kollbar, echo=FALSE, warning=FALSE, error=FALSE, include=FALSE}
+```{r kollbar, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE, eval=FALSE}
 # Kollbar data
 rvu = read.csv2("Z:/a_data/kollbar/data_ul/rvu_utan_na_rader_och_samma_start_stop.csv")
 pers = read.csv2("Z:/a_data/kollbar/data_ul/persondata.csv")
 
 rvu = rvu %>%
   left_join(., pers, by = "respondentid") %>%
-  filter(ar == "2020")
+  filter(ar == "2020") %>%
+  dplyr::select(respondentid, fardmedel.kat, ar.manad)
 
-rvu %>% 
-  filter(fardmedel.kat != "Annat") %>% 
-  group_by(ar.manad, fardmedel.kat) %>% 
-  tally() %>% 
-  ungroup() %>% 
-  group_by(ar.manad) %>% 
-  mutate(andel = n /sum(n)) 
+write.csv2(rvu, "01_input_data/rvu.csv", row.names = FALSE)
+rm(rvu)
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
+# Kollbar data
+rvu = read.csv2("01_input_data/rvu.csv")
+```
+
+
+
+```{r APC, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
+# APC data
+apc = read_excel("01_input_data/Pastigande_per_vecka_trafikslag.xlsx", sheet = "Tabell_Vecka", range = "A3:D10000")
+colnames(apc) = c("ar", "vecka", "trafikslag", "pastigande")
+
+apc = apc %>% 
+  filter(!is.na(ar)) %>%
+  mutate(ar = substr(ar, 1, 4),
+         ar_vecka = paste(ar, vecka, sep = "-"))
+```
+
+
+
+# Förändring i resande och färdmedelval
+
+## Resandeutveckling med kollektivtrafik i Uppsala län
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, message=FALSE}
+urval = c("Regiontrafiken", "Stadstrafiken")
+
+# identifiera max vecka med data för 2020
+MaxVecka = apc %>% 
+  filter(pastigande > 0 & ar == "2020") %>% 
+  summarise(max = max(vecka)) %>% 
+  pull()
+
+apc %>% filter(trafikslag %in% urval & 
+                 as.numeric(vecka) >= 3 & 
+                 vecka <= MaxVecka) %>%
+  rename(Trafikslag = trafikslag, `År` = ar) %>%
+  ggplot(. , 
+       aes(x=vecka, y=pastigande, group = interaction(Trafikslag, `År`), color = Trafikslag, linetype = `År`)) +
+  labs(title = "Förändring i påstigande per trafikslag",
+       x = "Vecka",
+       y = "Antal påstigande per vecka",
+       caption = "Datakälla: Region Uppsala") +
+  geom_line() +
+#  xlim(3, MaxVecka) +
+  ylim(0, max(apc$pastigande)) +
+  theme_classic()
+
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
+
+urval = c("Regiontrafiken", "Stadstrafiken")
+
+ggplot(subset(apc, trafikslag %in% urval & ar == "2020" & as.numeric(vecka) >= 3), 
+       aes(x=vecka, y=pastigande, group = trafikslag, color = trafikslag)) +
+  labs(title = "Medelvärde per vecka (2020)",
+#       subtitle = "(Uppsala län & Stockholms län)",
+       caption = "Datakälla: Region Uppsala") +
+  geom_line() +
+  ylim(0, max(apc$pastigande)) +
+  # geom_hline(yintercept=100, linetype="dashed", 
+  #               color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank(),
+        legend.position="bottom")
 
 ```
 
 
 
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+urval = c("Regiontrafiken", "Stadstrafiken")
 
+apc %>% 
+  dplyr::select(-ar_vecka) %>% 
+  spread(ar, pastigande) %>% 
+  mutate(Diff2020_2019 = round(`2020` - `2019`, 0)) %>%
+  mutate(ProcDiff = round(100 * (Diff2020_2019 / `2019`), 0)) %>%
+  filter(trafikslag %in% urval & as.numeric(vecka) >= 3 & !is.na(`2020`)) %>% 
+  ggplot(., 
+       aes(x=vecka, y=ProcDiff, group = trafikslag, color = trafikslag)) +
+  labs(title = "Relativ förändring (%) mellan 2020 och samma vecka i 2019",
+#       subtitle = "(Uppsala län & Stockholms län)",
+       caption = "Datakälla: Region Uppsala",
+y = "Förändring (%)") +
+  geom_line() +
+#  ylim(0, max(apc$pastigande)) +
+  # geom_hline(yintercept=100, linetype="dashed", 
+  #               color = "black", size=1)+
+  theme_classic() +
+  theme(legend.title=element_blank(),
+        legend.position="bottom")
+```
 
-
-# Förändring i resande och färdmedelval
 
 ## Resandeutveckling med bil i Uppsala län & Stockholms län
 
 Data visar en relativ volym av vägbeskrivningsförfrågningar som Apple tog emot.  
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
 urval = c("Uppsala County", "Stockholm County")
 
@@ -165,7 +253,7 @@ ggplot(subset(apple1, region %in% urval),
 
 ```
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
 urval = c("Uppsala County", "Stockholm County")
 
@@ -184,7 +272,7 @@ ggplot(subset(apple2, region %in% urval),
 ```
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
 urval = c("Uppsala County", "Stockholm County")
 
@@ -204,13 +292,12 @@ ggplot(subset(apple3, region %in% urval),
 ```
 
 
-
 ## Resandeutveckling med olika färdmedel i Stockholms stad  
 
 Som baslinje (100) används data från 13 januari 2020.
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 urval = c("Stockholm")
 
 ggplot(subset(apple1, region %in% urval), 
@@ -230,7 +317,7 @@ ggplot(subset(apple1, region %in% urval),
 ```
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 urval = c("Stockholm")
 
 ggplot(subset(apple2, region %in% urval), 
@@ -246,7 +333,7 @@ ggplot(subset(apple2, region %in% urval),
 ```
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 # Färmedel per dagtyp och vecka
 urval = c("Stockholm")
 
@@ -266,7 +353,7 @@ ggplot(subset(apple3, region %in% urval),
 
 Kollektivtrafikbarometerdata bekräftar negativ trenden i kollektivtrafikanvändning. Datamängden per månad är inte tillräckligt stort för att bryta ner på kommunnivå.
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 rvu %>% 
   filter(fardmedel.kat != "Annat") %>% 
   group_by(ar.manad, fardmedel.kat) %>% 
@@ -307,10 +394,10 @@ Baslinjen är medianvärdet för veckodagen under en femveckorsperiod mellan den
 
 &nbsp;
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 ggplot(subset(google1, sub_region_1 == "Uppsala County"), 
        aes(x=date, y=value, group = typ, color = typ)) +
-   labs(title = "Uppsala län",
+   labs(title = "Resande per dag (Uppsala län)",
        caption = "Datakälla: Google") +
   geom_line() +
   geom_hline(yintercept=0, linetype="dashed", 
@@ -325,10 +412,10 @@ ggplot(subset(google1, sub_region_1 == "Uppsala County"),
 
 &nbsp;
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 ggplot(subset(google2, sub_region_1 == "Uppsala County"), 
        aes(x=vecka, y=medel, group = typ, color = typ)) +
-   labs(title = "Uppsala län",
+   labs(title = "Redande per vecka (Uppsala län)",
        caption = "Datakälla: Google",
        y = "Medel per vecka") +
   geom_line() +
@@ -340,7 +427,7 @@ ggplot(subset(google2, sub_region_1 == "Uppsala County"),
 
 &nbsp;
 
-```{r echo=FALSE, warning=FALSE, error=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 ggplot(subset(google3, sub_region_1 == "Uppsala County" & typ == "transit_stations"), 
        aes(x=vecka, y=medel, group = dagtyp, color = dagtyp)) +
    labs(title = "Rörelsemönster på kollektivtrafikstationer i Uppsala län",
@@ -362,7 +449,7 @@ ggplot(subset(google3, sub_region_1 == "Uppsala County" & typ == "transit_statio
 
 # Datakällor
 
-**Om Apple data**  
+**Apple data**  
 
 Datakälla: https://www.apple.com/covid19/mobility  
 
@@ -374,7 +461,7 @@ Data som skickas från användares enheter till Kartor-tjänsten associeras med 
 
 &nbsp;
 
-**Om Google data**  
+**Google data**  
 Datakälla: https://www.google.com/covid19/mobility  
 
 Platskategorier  
@@ -395,5 +482,20 @@ Vilken data som inkluderas i beräkningarna beror på användarnas inställninga
 Vi inkluderar kategorier som är användbara vid social distansering samt tillgång till nödvändiga tjänster.  
 
 Vi beräknar dessa underlag utifrån data från användare som har aktiverat platshistorik för sina Google-konton. Denna data representerar därför endast en del av våra användare. Som är fallet med stickprov kan detta vara representativt för en bredare allmänhet men behöver inte vara det.
+
+&nbsp;
+
+**APC data**  
+APC utrustning finns i kring 20% av UL fordon. Rotation av APC utrustade fordon på alla linjer skulle säkerställa att varje tur mäts minst två gånger per månad, dvs systemet är anpassat för att leverera pålitligt månadsresultat. Upptåget APC data finns inte med i rapporten eftersom de nya tågen hittills inte har levererat pålitligt APC data.  
+
+Fördelen med APC data är att det inte påverkas av på vilken dörr en person påstiger och är därmed mer pålitligt än incheckningsdata, som i praktiken inte finns i nuläge eftersom resenärerna inte får påstiga genom framdörren.  
+
+&nbsp;
+
+**Kollektivtrafikbarometer**  
+Kollektivtrafikbarometer är en representativ attityd- och resvaneundersökning som utförs varje månad av Svensk Kollektivtrafik. Region Uppsala beställer 500 intervjuer per månad. Eftersom urvalet reflektera befolkningsfördelningen i länet, påverkas resultatet starkt av svarspersoner i Uppsala kommun.
+
+
+
 
 
