@@ -19,35 +19,37 @@ output:
     df_print: paged
 ---
 
-```{r echo=FALSE, warning=FALSE, error=FALSE,  message=FALSE, include=FALSE}
-suppressMessages(library(tidyr))
-suppressMessages(library(dplyr))
-suppressMessages(library(readxl))
-suppressMessages(library(ggplot2))
-#suppressMessages(library(gridExtra))
-suppressMessages(library(scales))
-
-knitr::opts_chunk$set(message = FALSE)
-options(scipen=10000)
-```
-
-
 ```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 rm(list = ls())
 invisible(gc())
 ```
 
 
+```{r echo=FALSE, warning=FALSE, error=FALSE,  message=FALSE, include=FALSE}
+suppressMessages(library(tidyr))
+suppressMessages(library(dplyr))
+suppressMessages(library(readxl))
+suppressMessages(library(ggplot2))
+suppressMessages(library(scales))
+suppressMessages(library(rjson))
+
+knitr::opts_chunk$set(message = FALSE)
+options(scipen=10000)
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE,  message=FALSE, include=FALSE}
+round_any = function(x, accuracy, f=round){f(x/ accuracy) * accuracy}
+```
+
+
 ```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
-# apple data
-date = substr(Sys.time(), 1, 10)
-date = as.Date(date, "%Y-%m-%d")
-date = date - 2 # data är 2 dagar gammal
+## apple data
+json_file <- "https://covid19-static.cdn-apple.com/covid19-mobility-data/current/v3/index.json"
+json_data <- fromJSON(paste(readLines(json_file), collapse=""))
+apple<-read.csv(paste0("https://covid19-static.cdn-apple.com", json_data$basePath, json_data$regions$`en-us`$csvPath))
 
-# det kan vara att apple också byter siffran i "Dev43" varje dag
-apple<-read.csv(paste0("https://covid19-static.cdn-apple.com/covid19-mobility-data/2008HotfixDev43/v3/en-us/applemobilitytrends-", date, ".csv"))
-
-write.csv2(apple, paste0("01_input_data/", "apple", date, ".csv"))
+write.csv2(apple, paste0("01_input_data/", "apple", substr(Sys.time(), 1, 10), ".csv"))
 
 apple = apple %>% 
   dplyr::select(-geo_type, -alternative_name, -sub.region, -country) %>%
@@ -64,51 +66,86 @@ apple1 = apple %>%
          grouping = paste(region, transportation_type, sep = "_"),
          transportation_type = gsub('driving', 'bil', transportation_type),
          transportation_type = gsub('transit', 'kollektivtrafik', transportation_type),
-         transportation_type = gsub('walking', 'gång', transportation_type))
+         transportation_type = gsub('walking', 'gång', transportation_type)) %>% ungroup()
 
 
 # aggregera per vecka
 apple2 = apple1 %>% 
   group_by(region, grouping, transportation_type, vecka) %>%
-  summarise(median = median(value),
-            medel = mean(value))
+  summarise(median = median(value, na.rm = TRUE),
+            medel = mean(value, na.rm = TRUE)) %>% ungroup()
 
 # aggregera per dagtyp och vecka
 apple3 = apple1 %>% 
   group_by(region, transportation_type, vecka, dagtyp) %>%
-  summarise(median = median(value),
-            medel = mean(value))
+  summarise(median = median(value, na.rm = TRUE),
+            medel = mean(value, na.rm = TRUE)) %>% ungroup()
+
 
 ```
 
 
 ```{r google, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
-# google data
-google<-read.csv("https://www.gstatic.com/covid19/mobility/Global_Mobility_Report.csv?cachebust=2dcf78defb92930a")
+##### google data
+
+## identifiera url för .csv filen på Google mobility reports sidan
+## men den fasta länken skulle också fungera: https://www.gstatic.com/covid19/mobility/Global_Mobility_Report.csv
+
+library(rvest)
+library(tibble)
+
+# https://gist.github.com/paulrougieux/e1ee769577b40cd9ed9db7f75e9a2cc2
+scraplinks <- function(url){
+  # Create an html document from the url
+  webpage <- xml2::read_html(url)
+  # Extract the URLs
+  url_ <- webpage %>%
+    rvest::html_nodes("a") %>%
+    rvest::html_attr("href")
+  # Extract the link text
+  link_ <- webpage %>%
+    rvest::html_nodes("a") %>%
+    rvest::html_text()
+  return(data_frame(link = link_, url = url_))
+}
+
+links = scraplinks("https://www.google.com/covid19/mobility/")
+google_csv = links[links$link == "Download global CSV",][[2]]
+
+google<-read.csv(paste0(google_csv))
 write.csv2(google, paste0("01_input_data/", "google", substr(Sys.time(), 1, 10), ".csv"))
 
-colnames(google) = c("country_region_code", "country_region", "sub_region_1", "sub_region_2", "date", "retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential") 
+google = google %>% dplyr::select(sub_region_1, date, 
+                         retail_and_recreation_percent_change_from_baseline,	
+                         grocery_and_pharmacy_percent_change_from_baseline,	
+                         parks_percent_change_from_baseline,	
+                         transit_stations_percent_change_from_baseline,	
+                         workplaces_percent_change_from_baseline,	
+                         residential_percent_change_from_baseline)
+
+colnames(google) = c("sub_region_1", "date", 
+                     "Shopping och nöje", "Livsmedelsbutiker och apotek", "Parker", "Kollektivtrafikstationer", "Arbetsplatser", "Bostäder") 
 
 google1 = google %>% 
-  gather(typ,value,retail_and_recreation:residential) %>%
+  gather(typ,value,`Shopping och nöje`:`Bostäder`) %>%
   filter(grepl("Uppsala", sub_region_1) | grepl("Stockholm", sub_region_1)) %>%
   mutate(date = gsub('[-]', '/', date),
          date = as.Date(date, "%Y/%m/%d"),
          vecka = strftime(date, format = "%V"),
          weekday = weekdays(date, abbr = TRUE),
-         dagtyp = ifelse(weekday == "lör" | weekday == "sön", "helg", "vardag"))
+         dagtyp = ifelse(weekday == "lör" | weekday == "sön", "helg", "vardag")) %>% ungroup()
 
 # aggregera per vecka
 google2 = google1 %>% 
   group_by(sub_region_1, typ, vecka) %>%
-  summarise(median = median(value),
-            medel = mean(value))
+  summarise(median = median(value, na.rm = TRUE),
+            medel = mean(value, na.rm = TRUE)) %>% ungroup()
 
 # aggregera per dagtyp och vecka
 google3 = google1 %>% 
   group_by(sub_region_1, typ, vecka, dagtyp) %>%
-  summarise(median = median(value),
-            medel = mean(value))
+  summarise(median = median(value, na.rm = TRUE),
+            medel = mean(value, na.rm = TRUE)) %>% ungroup()
 
 ```
 
@@ -138,7 +175,7 @@ rvu = read.csv2("01_input_data/rvu.csv")
 
 ```{r APC, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 # APC data
-apc = read_excel("01_input_data/Pastigande_per_vecka_trafikslag.xlsx", sheet = "Tabell_Vecka", range = "A3:D10000")
+apc = read_excel("01_input_data/Pastigande_per_vecka_trafikslag_2020-06-04.xlsx", sheet = "Tabell_Vecka", range = "A3:D10000")
 colnames(apc) = c("ar", "vecka", "trafikslag", "pastigande")
 
 apc = apc %>% 
@@ -170,12 +207,17 @@ apc %>% filter(trafikslag %in% urval &
        aes(x=vecka, y=pastigande, group = interaction(Trafikslag, `År`), color = Trafikslag, linetype = `År`)) +
   labs(title = "Förändring i påstigande per trafikslag",
        x = "Vecka",
-       y = "Antal påstigande per vecka",
+       y = "Antal påstigande (per vecka)",
        caption = "Datakälla: Region Uppsala") +
-  geom_line() +
-#  xlim(3, MaxVecka) +
+  geom_line(size=1.5) +
   ylim(0, max(apc$pastigande)) +
-  theme_classic()
+  theme_classic() +
+  theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14),
+        legend.position="bottom") +
+  scale_y_continuous(labels = function(y) format(y, big.mark = " ",
+                                                       scientific = FALSE))
 
 ```
 
@@ -216,13 +258,16 @@ apc %>%
 #       subtitle = "(Uppsala län & Stockholms län)",
        caption = "Datakälla: Region Uppsala",
 y = "Förändring (%)") +
-  geom_line() +
+  geom_line(size=1.5) +
 #  ylim(0, max(apc$pastigande)) +
   # geom_hline(yintercept=100, linetype="dashed", 
   #               color = "black", size=1)+
   theme_classic() +
   theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14),
         legend.position="bottom")
+
 ```
 
 
@@ -231,7 +276,7 @@ y = "Förändring (%)") +
 Data visar en relativ volym av vägbeskrivningsförfrågningar som Apple tog emot.  
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 
 urval = c("Uppsala County", "Stockholm County")
 
@@ -253,20 +298,25 @@ ggplot(subset(apple1, region %in% urval),
 
 ```
 
+
+
 ```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
 urval = c("Uppsala County", "Stockholm County")
 
 ggplot(subset(apple2, region %in% urval), 
-       aes(x=vecka, y=medel, group = region, color = region)) +
-  labs(title = "Medelvärde per vecka",
-#       subtitle = "(Uppsala län & Stockholms län)",
-       caption = "Datakälla: Apple") +
-  geom_line() +
-  geom_hline(yintercept=100, linetype="dashed", 
+       aes(x=vecka, y=medel-100, group = region, color = region)) +
+  labs(title = "Förändring i vägbeskrivningsförfrågningar (Apple)",
+       caption = "Datakälla: Apple",
+       x = "Vecka",
+       y = "Föränding (%)") +
+  geom_line(size=1.5) +
+  geom_hline(yintercept=0, linetype="dashed", 
                 color = "black", size=1)+
   theme_classic() +
   theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14),
         legend.position="bottom")
 
 ```
@@ -274,19 +324,22 @@ ggplot(subset(apple2, region %in% urval),
 
 ```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
 
-urval = c("Uppsala County", "Stockholm County")
+urval = c("Uppsala County")
 
 ggplot(subset(apple3, region %in% urval), 
-       aes(x=vecka, y=medel, group = interaction(region, dagtyp) , color = region, shape = dagtyp)) +
-  labs(title = "Medelvärde per vecka för vardagar och helg",
-#       subtitle = "(Uppsala län & Stockholms län)",
-       caption = "Datakälla: Apple") +
-  geom_line() +
-  geom_point(size = 2) +
-  geom_hline(yintercept=100, linetype="dashed", 
+       aes(x=vecka, y=medel-100, group = dagtyp, color = dagtyp)) +
+  labs(title = "Skillnad i förändring mellan vardagar och helger i Uppsala län",
+       caption = "Datakälla: Apple",
+       x = "Vecka",
+       y = "Föränding (%)") +
+  geom_line(size=1.5) +
+  geom_point(size = 3) +
+  geom_hline(yintercept=0, linetype="dashed", 
                 color = "black", size=1)+
   theme_classic() +
   theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14),
         legend.position="bottom")
 
 ```
@@ -297,7 +350,7 @@ ggplot(subset(apple3, region %in% urval),
 Som baslinje (100) används data från 13 januari 2020.
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 urval = c("Stockholm")
 
 ggplot(subset(apple1, region %in% urval), 
@@ -321,19 +374,23 @@ ggplot(subset(apple1, region %in% urval),
 urval = c("Stockholm")
 
 ggplot(subset(apple2, region %in% urval), 
-       aes(x=vecka, y=medel, group = transportation_type, color = transportation_type)) +
-  labs(title = "Medelvärde per vecka",
+       aes(x=vecka, y=medel-100, group = transportation_type, color = transportation_type)) +
+  labs(title = "Förändring i färdmedelval",
        subtitle = "(Stockholms stad, data för Uppsala finns inte)",
        caption = "Datakälla: Apple") +
-  geom_line() +
-  geom_hline(yintercept=100, linetype="dashed", 
+  geom_line(size=1.5) +
+  geom_hline(yintercept=0, linetype="dashed", 
                 color = "black", size=1)+
   theme_classic() +
-  theme(legend.title=element_blank())
+  theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14),
+        legend.position="bottom")
+
 ```
 
 
-```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 # Färmedel per dagtyp och vecka
 urval = c("Stockholm")
 
@@ -363,16 +420,16 @@ rvu %>%
   mutate(andel = n /sum(n)) %>%
   ggplot(., 
        aes(x=ar.manad, y=andel * 100, group = fardmedel.kat, color = fardmedel.kat)) +
-  labs(title = "Marknadsandel per måndad (Kollbar)",
+  labs(title = "Marknadsandel per trafikslag",
        y = "Marknadsandel (%)",
-       x = "",
+       x = "Månad",
        subtitle = "(Uppsala län)",
        caption = "Datakälla: Kollektivtrafikbarometer") +
-  geom_line() +
-  # geom_hline(yintercept=100, linetype="dashed", 
-  #               color = "black", size=1)+
+  geom_line(size=1.5) +
   theme_classic() +
   theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14),
         legend.position="bottom")
 ```
 
@@ -381,7 +438,9 @@ rvu %>%
 
 # Förändring i resande med olika syfte  
 
-Data visar hur besök och vistelselängd på olika platser ändras jämfört med en baslinje. Platstyper som visas är:  
+Relativ förändring i besökare (eller tillbringad tid) på olika platser jämfört med en baslinje. Baslinjen är medianvärdet för veckodagen under en femveckorsperiod mellan den 3 januari och 6 februari 2020.  
+
+Platstyper som visas är:  
 
 * **Livsmedelsbutiker och apotek:** Trender i rörelsemönster för platser som mataffärer, grossistbutiker, matmarknader, delikatessbutiker och apotek.  
 * **Parker:** Trender i rörelsemönster för platser som stadsparker, nationalparker, allmänna stränder, marinor, hundrastgårdar, torg och besöksträdgårdar.  
@@ -390,11 +449,9 @@ Data visar hur besök och vistelselängd på olika platser ändras jämfört med
 * **Bostäder:** Trender i rörelsemönster gällande bostäder.
 * **Arbetsplatser:** Trender i rörelsemönster gällande arbetsplatser  
 
-Baslinjen är medianvärdet för veckodagen under en femveckorsperiod mellan den 3 januari och 6 februari 2020.  
-
 &nbsp;
 
-```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE, include=FALSE}
 ggplot(subset(google1, sub_region_1 == "Uppsala County"), 
        aes(x=date, y=value, group = typ, color = typ)) +
    labs(title = "Resande per dag (Uppsala län)",
@@ -413,31 +470,52 @@ ggplot(subset(google1, sub_region_1 == "Uppsala County"),
 &nbsp;
 
 ```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
-ggplot(subset(google2, sub_region_1 == "Uppsala County"), 
-       aes(x=vecka, y=medel, group = typ, color = typ)) +
-   labs(title = "Redande per vecka (Uppsala län)",
-       caption = "Datakälla: Google",
-       y = "Medel per vecka") +
-  geom_line() +
+## besök och vistelselängd på olika platser ändras jämfört med en baslinje. Vi beräknar dessa förändringar med samma typ av sammanställda och anonymiserade data som används för att visa populära tider för platser i Google Maps.  
+## Förändringarna per dag jämförs med ett baslinjevärde för den aktuella veckodagen: Baslinjen är medianvärdet för veckodagen under en femveckorsperiod mellan den 3 januari och 6 februari 2020.
+
+median_min = round_any(min(google2$median, na.rm = TRUE),10)
+median_max = round_any(max(google2$median, na.rm = TRUE),10)
+
+p1 = ggplot(subset(google2, sub_region_1 == "Uppsala County"), 
+       aes(x=vecka, y=median, group = typ, color = typ)) +
+   labs(title = "Förändring i besökare (eller tillbringad tid) på olika platstyper",
+       caption = 'Datakälla: Google LLC "Google COVID-19 Community Mobility Reports"',
+       x = "Vecka",
+       y = "Föränding (%)") +
+  geom_line(size=1.5) +
   geom_hline(yintercept=0, linetype="dashed", 
                 color = "black", size=1)+
   theme_classic() +
-  theme(legend.title=element_blank())
+  theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14),
+        legend.position="bottom") +
+   scale_y_continuous(limits = c(median_min, median_max),
+                                 breaks = seq(median_min, median_max, by = 25))
+
+ggsave(file = paste0("03_output_figures/google_syfte_vecka_", substr(Sys.time(), 1, 10), ".svg"), plot=p1, width=10, height=8)
+
+p1
 ```
 
 &nbsp;
 
 ```{r echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
-ggplot(subset(google3, sub_region_1 == "Uppsala County" & typ == "transit_stations"), 
-       aes(x=vecka, y=medel, group = dagtyp, color = dagtyp)) +
-   labs(title = "Rörelsemönster på kollektivtrafikstationer i Uppsala län",
+suppressWarnings(
+ggplot(subset(google3, sub_region_1 == "Uppsala County" & typ == "Kollektivtrafikstationer"), 
+       aes(x=vecka, y=median, group = dagtyp, color = dagtyp)) +
+   labs(title = "Förändring i besökare (eller tillbringad tid) på kollektivtrafikstationer i Uppsala län",
        caption = "Datakälla: Google",
-       y = "Medel per vecka") +
-  geom_line() +
+       x = "Vecka",
+       y = "Föränding (%)") +
+  geom_line(size=1.5) +
   geom_hline(yintercept=0, linetype="dashed", 
                 color = "black", size=1)+
   theme_classic() +
-  theme(legend.title=element_blank())
+  theme(legend.title=element_blank(),
+        legend.text=element_text(size=12),
+        text = element_text(size=14))
+)
 ```
 
 
@@ -463,19 +541,30 @@ Data som skickas från användares enheter till Kartor-tjänsten associeras med 
 
 **Google data**  
 Datakälla: https://www.google.com/covid19/mobility  
+Dokumentation: https://support.google.com/covid19-mobility/answer/9824897?hl=sv&ref_topic=9822927  
 
 Platskategorier  
 
-* Livsmedelsbutiker och apotek: Trender i rörelsemönster för platser som mataffärer, grossistbutiker, matmarknader, delikatessbutiker och apotek.  
-* Parker: Trender i rörelsemönster för platser som stadsparker, nationalparker, allmänna stränder, marinor, hundrastgårdar, torg och besöksträdgårdar.  
-* Stationer i kollektivtrafiken: Trender i rörelsemönster på kollektivtrafikstationer som tunnelbane-, buss- och tågstationer.
-* Shopping och nöje: Trender i rörelsemönster för platser som restauranger, kaféer, shoppingcenter, nöjesparker, museer, bibliotek och biografer.
-* Bostäder: Trender i rörelsemönster gällande bostäder.
-* Arbetsplatser: Trender i rörelsemönster gällande arbetsplatser
+* Livsmedelsbutiker och apotek: Mataffärer, grossistbutiker, matmarknader, delikatessbutiker och apotek etc.  
+* Parker: Stadsparker, nationalparker, allmänna stränder, marinor, hundrastgårdar, torg och besöksträdgårdar etc.  
+* Stationer i kollektivtrafiken: Kollektivtrafikstationer som tunnelbane-, buss- och tågstationer. Dessutom ingår andra typer av platser som t ex taxistationer, rastplatser vid motorväg och biluthyrningsbyrå.
+* Shopping och nöje: Restauranger, kaféer, shoppingcenter, nöjesparker, museer, bibliotek och biografer.
+* Bostäder: Bostäder.
+* Arbetsplatser: Arbetsplatser
 
-Dessa dataset visar hur besök och vistelselängd på olika platser ändras jämfört med en baslinje. Vi beräknar dessa förändringar med samma typ av sammanställda och anonymiserade data som används för att visa populära tider för platser i Google Maps.  
 
-Förändringarna per dag jämförs med ett baslinjevärde för den aktuella veckodagen: Baslinjen är medianvärdet för veckodagen under en femveckorsperiod mellan den 3 januari och 6 februari 2020. Dataseten visar trender för flera månader, och den senaste datan är cirka 2–3 dagar gammal. Det är den tid som krävs för att skapa dataseten.  
+Tolkning av data  
+
+Uppgifterna visar hur besökare (eller tillbringad tid) på kategoriserade platser förändras jämfört med våra baslinjedagar. En baslinjedag representerar ett normalt värde för den veckodagen. Baslinjen är medianvärdet från femveckorsperioden 3 januari–6 februari 2020.
+
+Baslinjen är inte ett enda värde för varje regionskategori, utan sju enskilda värden. Samma antal besökare två olika veckodagar resulterar i olika procentuella förändringar. Därför rekommenderar vi följande:  
+
+* Dra inte slutsatsen att större förändringar innebär fler besökare eller att mindre förändringar innebär färre besökare.  
+
+* Undvik att jämföra förändringar från en dag till en annan, särskilt helger med vardagar.
+
+
+Urval  
 
 Vilken data som inkluderas i beräkningarna beror på användarnas inställningar och anslutning och huruvida den uppfyller vår sekretessgräns. Om sekretessgränsen inte uppfylls (när en plats inte har tillräckligt många besökare för att garantera anonymitet) visar vi ingen förändring för den dagen. Resultatet kan bli att du ser tomma fält för vissa platser och date.  
 
